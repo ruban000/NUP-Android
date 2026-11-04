@@ -4,14 +4,17 @@ import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
+import android.text.InputType
+import android.view.ViewGroup
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.SeekBar
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.documentfile.provider.DocumentFile
+import java.io.File
 import java.util.Locale
 
 class MainActivity : ComponentActivity() {
@@ -22,17 +25,19 @@ class MainActivity : ComponentActivity() {
     private lateinit var statusText: TextView
     private lateinit var scanButton: Button
     private lateinit var convertButton: Button
-    private lateinit var levelText: TextView
+    private lateinit var titleIdInput: EditText
+    private lateinit var versionInput: EditText
+    private var scanned = false
 
     private val folderPicker =
         registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
             if (uri != null) {
                 try {
                     contentResolver.takePersistableUriPermission(
-                        uri,
-                        Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
                     )
                     selectedFolder = uri
+                    scanned = false
                     folderText.text = uri.lastPathSegment ?: "Folder selected"
                     resultText.text = "Folder has not been scanned yet."
                     statusText.text = "Ready to scan."
@@ -42,6 +47,12 @@ class MainActivity : ComponentActivity() {
                     statusText.text = "Could not access selected folder: ${e.message}"
                 }
             }
+        }
+
+    private val outputPicker =
+        registerForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+            if (uri != null) convertToNup(uri)
+            else statusText.text = "Save cancelled."
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -62,10 +73,23 @@ class MainActivity : ComponentActivity() {
                 layout.addView(this)
             }
 
+        fun addInput(hintText: String, type: Int, value: String = ""): EditText =
+            EditText(this).apply {
+                hint = hintText
+                setHintTextColor(Color.GRAY)
+                setTextColor(Color.WHITE)
+                inputType = type
+                setSingleLine(true)
+                setText(value)
+                layout.addView(this, ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ))
+            }
+
         addText("NUP CONVERTER", 27f, Color.WHITE)
         addText("ADVANCED EDITION  •  OFFLINE", 13f, Color.CYAN)
-        addText("GAME FOLDER", 18f, Color.WHITE)
-
+        addText("SOURCE GAME FOLDER", 18f, Color.WHITE)
         folderText = addText("No folder selected", 14f, Color.LTGRAY)
 
         layout.addView(Button(this).apply {
@@ -80,27 +104,40 @@ class MainActivity : ComponentActivity() {
         }
         layout.addView(scanButton)
 
-        addText("FOLDER INFORMATION", 18f, Color.CYAN)
-        resultText = addText("Select a folder, then scan it.", 14f, Color.WHITE)
+        addText("PACKAGE DETAILS", 18f, Color.CYAN)
+        addText("Title ID (16 hexadecimal digits)", 14f, Color.WHITE)
+        titleIdInput = addInput(
+            "Example: 0100000000010000",
+            InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        )
+        addText("Version (unsigned 32-bit number)", 14f, Color.WHITE)
+        versionInput = addInput("0", InputType.TYPE_CLASS_NUMBER, "0")
 
-        addText("COMPRESSION SETTINGS", 18f, Color.WHITE)
-        val seekBar = SeekBar(this).apply {
-            max = 18
-            progress = 2
-        }
-        layout.addView(seekBar)
-        levelText = addText("Zstandard level: 3", 14f, Color.CYAN)
-        seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
-                levelText.text = "Zstandard level: ${progress + 1}"
-            }
-            override fun onStartTrackingTouch(bar: SeekBar?) = Unit
-            override fun onStopTrackingTouch(bar: SeekBar?) = Unit
-        })
+        addText("FOLDER SCAN", 18f, Color.CYAN)
+        resultText = addText("Select a folder, then scan it.", 14f, Color.WHITE)
+        addText("OUTPUT", 18f, Color.CYAN)
+        addText(
+            "This build writes valid raw-file entries only. Zstandard compression, " +
+                "metadata extraction, and update/DLC package discovery are not implemented yet.",
+            13f, Color.LTGRAY
+        )
 
         convertButton = Button(this).apply {
-            text = "CONVERT TO NUP"
+            text = "SAVE AS NUP"
             isEnabled = false
+            setOnClickListener {
+                val title = titleIdInput.text.toString().trim()
+                val version = versionInput.text.toString().trim().toLongOrNull()
+                if (!title.matches(Regex("[0-9a-fA-F]{16}"))) {
+                    statusText.text = "Enter a 16-digit hexadecimal Title ID."
+                    return@setOnClickListener
+                }
+                if (version == null || version !in 0..0xFFFF_FFFFL) {
+                    statusText.text = "Version must be between 0 and 4294967295."
+                    return@setOnClickListener
+                }
+                outputPicker.launch("game.nup")
+            }
         }
         layout.addView(convertButton)
 
@@ -133,22 +170,65 @@ class MainActivity : ComponentActivity() {
                     ExeFS folder: ${if (result.hasExeFs) "Found" else "Not found"}
                     RomFS folder: ${if (result.hasRomFs) "Found" else "Not found"}
                     Unknown file sizes: ${result.unknownSizes}
-
-                    Folder scan does not yet validate the NUP layout.
                 """.trimIndent()
 
                 runOnUiThread {
                     resultText.text = report
-                    statusText.text = "Scan successful. NUP format validation is the next step."
+                    scanned = true
+                    statusText.text = "Scan complete. Enter package details to save."
                     scanButton.isEnabled = true
-                    // Keep disabled until the real NUP writer is implemented.
-                    convertButton.isEnabled = false
+                    convertButton.isEnabled = result.files > 0
                 }
             } catch (e: Exception) {
                 runOnUiThread {
                     statusText.text = "Scan failed: ${e.message ?: "Unknown error"}"
                     scanButton.isEnabled = true
+                    scanned = false
                 }
+            }
+        }.start()
+    }
+
+    private fun convertToNup(outputUri: Uri) {
+        val sourceUri = selectedFolder ?: return
+        val titleId = try {
+            java.lang.Long.parseUnsignedLong(titleIdInput.text.toString().trim(), 16)
+        } catch (_: NumberFormatException) {
+            statusText.text = "Invalid Title ID."
+            return
+        }
+        val version = versionInput.text.toString().trim().toLongOrNull()?.toInt() ?: 0
+
+        convertButton.isEnabled = false
+        scanButton.isEnabled = false
+        statusText.text = "Building NUP file… Keep the app open."
+
+        Thread {
+            val temporary = File(cacheDir, "nup-conversion-${System.currentTimeMillis()}.tmp")
+            try {
+                val source = DocumentFile.fromTreeUri(this, sourceUri)
+                    ?: error("Unable to reopen source folder")
+                val result = NupWriter.write(
+                    contentResolver, source, temporary, titleId, version
+                )
+                contentResolver.openOutputStream(outputUri, "w")?.use { output ->
+                    temporary.inputStream().use { input -> input.copyTo(output) }
+                } ?: error("Could not open the destination file")
+
+                runOnUiThread {
+                    statusText.text = "NUP saved. ${result.files} files, " +
+                        "${result.directories} folders, ${result.bytes} bytes (raw)."
+                    convertButton.isEnabled = scanned
+                    scanButton.isEnabled = true
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    statusText.text = "Conversion failed: ${e.message ?: "Unknown error"}"
+                    convertButton.isEnabled = scanned
+                    scanButton.isEnabled = true
+                }
+            } finally {
+                temporary.delete()
             }
         }.start()
     }

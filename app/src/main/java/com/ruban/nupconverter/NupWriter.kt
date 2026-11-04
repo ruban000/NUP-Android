@@ -203,7 +203,7 @@ object NupWriter {
         }
         val finalSize = if (files.any { it.size > 0 }) {
             var end = blobOffset
-            files.filter { it.size > 0 }.forEach { end = maxOf(end, it.nameOffset.toLong() + it.size) }
+            files.filter { it.size > 0 }.forEach { end = maxOf(end, it.extentOffset + it.size) }
             end
         } else blobOffset
 

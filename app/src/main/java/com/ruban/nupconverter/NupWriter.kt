@@ -34,7 +34,8 @@ object NupWriter {
         var fileIndex: Int = NONE,
         var firstChild: Int = 0,
         var childCount: Int = 0,
-        var nameOffset: Int = 0
+        var nameOffset: Int = 0,
+        var extentOffset: Long = 0L
     )
 
     data class Result(val files: Int, val directories: Int, val bytes: Long)
@@ -196,9 +197,9 @@ object NupWriter {
         var cursor = blobOffset
         files.forEach { file ->
             if (file.size > 0) {
-                file.nameOffset = cursor.toInt() // temporarily store extent offset
+                file.extentOffset = cursor
                 cursor = align16(cursor + file.size)
-            } else file.nameOffset = 0
+            } else file.extentOffset = 0L
         }
         val finalSize = if (files.any { it.size > 0 }) {
             var end = blobOffset
@@ -209,7 +210,7 @@ object NupWriter {
         // Patch file extent offsets in TOC and recompute TOC digest.
         files.forEach { file ->
             val record = filesOffset + file.fileIndex * FILE_SIZE
-            tocBytes.putLongLE(record + 16, file.nameOffset.toLong())
+            tocBytes.putLongLE(record + 16, file.extentOffset)
         }
         val finalTocHash = MessageDigest.getInstance("SHA-256").digest(tocBytes)
 
@@ -222,7 +223,7 @@ object NupWriter {
             val buffer = ByteArray(64 * 1024)
             files.forEach { file ->
                 if (file.size == 0L) return@forEach
-                val extent = file.nameOffset.toLong()
+                val extent = file.extentOffset
                 out.seek(extent)
                 var remaining = file.size
                 resolver.openInputStream(file.uri!!)?.use { input ->

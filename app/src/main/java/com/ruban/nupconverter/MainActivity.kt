@@ -1,5 +1,8 @@
 package com.ruban.nupconverter
 
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.activity.ComponentActivity
 import android.os.Bundle
 import android.content.Intent
@@ -123,9 +126,30 @@ class MainActivity : ComponentActivity() {
             Color.GREEN
         )
 
-        val scroll = ScrollView(this)
-        scroll.addView(layout)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
 
-        setContentView(scroll)
+val scroll = ScrollView(this).apply {
+    setBackgroundColor(Color.rgb(15, 17, 25))
+    isFillViewport = true
+}
+
+scroll.addView(layout)
+
+ViewCompat.setOnApplyWindowInsetsListener(scroll) { view, insets ->
+    val systemBars = insets.getInsets(
+        WindowInsetsCompat.Type.systemBars()
+    )
+
+    view.setPadding(
+        0,
+        systemBars.top,
+        0,
+        systemBars.bottom
+    )
+
+    insets
+}
+
+setContentView(scroll)
     }
 }
